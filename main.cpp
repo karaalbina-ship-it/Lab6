@@ -1,106 +1,90 @@
 #include <iostream>
 #include <deque>
-#include <vector>
-#include <functional>
+#include <coroutine>
+#include <cmath>
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
-#include <cmath>
 
 using namespace std;
 
-void EnableUkrainian() {
+void SetupConsole() {
     SetConsoleCP(65001);
     SetConsoleOutputCP(65001);
     _setmode(_fileno(stdout), _O_U16TEXT);
     _setmode(_fileno(stdin), _O_U16TEXT);
 }
 
-class Coroutine {
-public:
-    function<void()> body;
-    bool finished = false;
-    Coroutine(function<void()> f) : body(move(f)) {}
-    void resume() { if (!finished && body) body(); }
-};
+struct InputAwaiter {
+    static inline deque<double> window;
+    static inline double prev1 = 0, prev2 = 0;
+    static inline bool first = true, second = true;
 
-class Scheduler {
-    vector<Coroutine*> coroutines;
-    Coroutine* current = nullptr;
-public:
-    void spawn(Coroutine* co) { coroutines.push_back(co); }
-    static void yield() {}
-    void run() {
-        while (true) {
-            bool done = true;
-            for (auto* co : coroutines) {
-                if (!co->finished) {
-                    done = false;
-                    current = co;
-                    co->resume();
-                }
-            }
-            if (done) break;
-        }
-    }
-    static Coroutine* get_current() { return instance->current; }
-    static Scheduler* instance;
-};
+    bool await_ready() const noexcept { return false; }
 
-Scheduler* Scheduler::instance = nullptr;
-
-void average_coroutine() {
-    deque<double> window;
-    vector<double> last_three;
-
-    wcout << L"Вводьте числа:\n\n";
-
-    while (true) {
-        double x;
+    void await_suspend(coroutine_handle<> h) noexcept {
+        double value;
         wcout << L"> ";
         wcout.flush();
 
-        if (!(wcin >> x)) {
+        if (!(wcin >> value)) {
             wcout << L"\nПомилка вводу. Програма завершена.\n";
-            Scheduler::get_current()->finished = true;
+            h.destroy();
             return;
         }
 
-        window.push_back(x);
+        window.push_back(value);
         if (window.size() > 10) window.pop_front();
 
-        last_three.push_back(x);
-        if (last_three.size() > 3) last_three.erase(last_three.begin());
-
         if (window.size() == 10) {
-            double sum = 0;
-            for (double v : window) sum += v;
+            double sum = 0.0;
+            for (double x : window) sum += x;
             wcout << L"Середнє значення останніх 10 чисел: " << sum / 10.0 << L"\n";
         }
 
-        if (last_three.size() == 3 &&
-            abs(last_three[0] - last_three[1]) < 1e-9 &&
-            abs(last_three[1] - last_three[2]) < 1e-9) {
-
-            wcout << L"\nТри однакові значення (" << last_three[0] << L") поспіль — сопрограма призупиняється.\n";
+        if (!first && !second &&
+            abs(prev1 - prev2) < 1e-9 && abs(prev2 - value) < 1e-9) {
+            wcout << L"\nТри однакові (" << value << L") поспіль — сопрограма призупиняється.\n";
             wcout << L"Натисніть Enter...\n";
-            Scheduler::yield();
-            wcout << L"Сопрограма відновлена після призупинки.\n\n";
-            last_three.clear();
+            wcin.ignore(10000, '\n');
+            wcin.get();
+            wcout << L"Сопрограма відновлена після зупинки.\n\n";
         }
+
+        prev1 = prev2;
+        prev2 = value;
+        first = second = false;
+
+        h.resume();
+    }
+
+    void await_resume() const noexcept {}
+};
+
+struct Task {
+    struct promise_type {
+        Task get_return_object() { return {}; }
+        suspend_never initial_suspend() { return {}; }
+        suspend_always final_suspend() noexcept { return {}; }
+        void return_void() {}
+        void unhandled_exception() { terminate(); }
+
+        InputAwaiter await_transform(int) const noexcept {
+            return {};
+        }
+    };
+};
+
+Task average_coroutine() {
+    wcout << L"Вводьте числа:\n\n";
+    while (true) {
+        co_await 0;
     }
 }
 
 int main() {
-    EnableUkrainian();
-
-    Scheduler scheduler;
-    Scheduler::instance = &scheduler;
-
-    auto* co = new Coroutine(average_coroutine);
-    scheduler.spawn(co);
-    scheduler.run();
-
-    delete co;
+    SetupConsole();
+    average_coroutine();
+    wcout << L"\nПрограма завершена.\n";
     return 0;
 }
